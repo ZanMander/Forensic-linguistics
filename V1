@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+
+import os
+import zipfile
+import uuid
+import sys
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+
+# If you want a bar chart, you'll need matplotlib. Otherwise, comment these out.
+import matplotlib.pyplot as plt
+
+###############################################################################
+# 1) EXTRACT + PARSE
+###############################################################################
+
+def extract_docx_xml(docx_path, xml_filename="word/document.xml"):
+    """
+    Unzips the .docx file and returns the content of word/document.xml as a string.
+    """
+    temp_folder = f"docx_extracted_{uuid.uuid4().hex}"
+    os.mkdir(temp_folder)
+
+    try:
+        with zipfile.ZipFile(docx_path, "r") as z:
+            z.extractall(temp_folder)
+
+        xml_path = os.path.join(temp_folder, xml_filename)
+        if not os.path.isfile(xml_path):
+            raise FileNotFoundError(f"Could not find {xml_filename} in {docx_path}.")
+
+        with open(xml_path, "r", encoding="utf-8") as f:
+            return f.read()
+    finally:
+        import shutil
+        shutil.rmtree(temp_folder, ignore_errors=True)
+
+
+def parse_document_xml(xml_data):
+    """
+    Converts the XML into a list of (text, rsid). Each pair is a run of text 
+    with a possible run-level or paragraph-level RSID.
+    """
+    ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+    root = ET.fromstring(xml_data)
+    runs_data = []
+
+    for p in root.findall('.//w:p', ns):
+        p_rsid = p.attrib.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}rsidR')
+        for r in p.findall('.//w:r', ns):
+            r_rsid = r.attrib.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}rsidR')
+            effective_rsid = r_rsid if r_rsid else p_rsid
+
+            texts = r.findall('.//w:t', ns)
+            full_text = ''.join(t.text for t in texts if t.text)
+            if full_text.strip():
+                runs_data.append((full_text, effective_rsid))
+
+    return runs_data
+
+###############################################################################
+# 2) ANALYTICS
+###############################################################################
+
+def compute_rsid_stats(runs_data):
+    """
+    Returns a dict with RSID -> total word count, plus any other stats you want.
+    """
+    rsid_wordcount = defaultdict(int)
+    for text, rsid in runs_data:
+        if not rsid:
+            rsid = "NO_RSID"
+        # Count words
+        word_count = len(text.split())
+        rsid_wordcount[rsid] += word_count
+
+    return dict(rsid_wordcount)
+
+
+def describe_rsid_in_lay_terms(rsid):
+    """
+    Basic explanation for each RSID used in the HTML table.
+    """
+    if rsid == "NO_RSID" or not rsid:
+        return ("No run-level code. Possibly inherited or none at all.")
+    return ("Text with this code likely came from the same edit session. "
+            "If you see large blocks with one code, they may have been pasted "
+            "in all at once.")
+
+
+###############################################################################
+# 3) COLOR-CODED HTML REPORT
+###############################################################################
+
+def build_html_report(runs_data, rsid_wordcount):
+    """
+    Creates a single HTML file that:
+      - Explains RSIDs in plain English
+      - Displays color-coded text
+      - Shows a table with basic frequencies
+    """
+    palette = [
+        "#f4cccc", "#c9daf8", "#d9ead3", "#fff2cc", "#ffd8b1",
+        "#d5a6bd", "#b6d7a8", "#a4c2f4", "#ead1dc", "#cfe2f3",
+        "#c2d69b", "#ea9999", "#9fc5e8"
+    ]
+
+    rsid_to_color = {}
+    color_index = 0
+
+    html = []
+    html.append("<html>")
+    html.append("<head><meta charset='UTF-8'><title>Clarify + Analytics</title></head>")
+    html.append("<body style='font-family: Arial, sans-serif; margin:20px;'>")
+
+    # Intro
+    html.append("<h1>Clarify Report: RSIDs & Basic Analytics</h1>")
+    html.append("""
+    <p>
+      This report color-codes each block of text based on its <strong>Revision Save Identifier</strong> (RSID).
+      Large blocks with a single code often indicate they were pasted or inserted at once, 
+      whereas multiple small codes may show a more gradual writing process.
+    </p>
+    <hr>
+    """)
+
+    # Color-coded text
+    html.append("<h2>1. Color-Coded Text by RSID</h2>")
+    html.append("<div>")
+    for text, rsid in runs_data:
+        if not rsid:
+            rsid = "NO_RSID"
+
+        if rsid not in rsid_to_color:
+            rsid_to_color[rsid] = palette[color_index % len(palette)]
+            color_index += 1
+
+        color = rsid_to_color[rsid]
+        safe_text = (text.replace("&", "&amp;")
+                         .replace("<", "&lt;")
+                         .replace(">", "&gt;")
+                         .replace("\"", "&quot;"))
+
+        span_html = (f"<span style='background-color:{color}; padding:2px; margin:1px;' "
+                     f"title='RSID={rsid}'>{safe_text}</span>")
+        html.append(span_html + " ")
+    html.append("</div>")
+
+    # Basic frequencies
+    html.append("<hr>")
+    html.append("<h2>2. RSID Frequencies</h2>")
+    html.append("""
+    <p>
+      Below is a table of how many words are linked to each RSID. 
+      A single RSID covering a large portion can mean a big block of text was 
+      added all at once.
+    </p>
+    """)
+
+    # Build the table
+    html.append("<table border='1' cellpadding='5' style='border-collapse: collapse;'>")
+    html.append("<tr><th>RSID</th><th>Word Count</th><th>Description</th></tr>")
+
+    # Sort by word count descending
+    sorted_rsids = sorted(rsid_wordcount.items(), key=lambda x: x[1], reverse=True)
+    for rsid, wc in sorted_rsids:
+        color = rsid_to_color.get(rsid, "#ffffff")
+        explanation = describe_rsid_in_lay_terms(rsid)
+        row = (f"<tr>"
+               f"<td style='background-color:{color};'><code>{rsid}</code></td>"
+               f"<td>{wc}</td>"
+               f"<td>{explanation}</td>"
+               "</tr>")
+        html.append(row)
+
+    html.append("</table>")
+
+    html.append("""
+    <p>
+      Note: Large word-count blocks under a single RSID can signal copy-paste or 
+      single-session insertion. Many small counts can reflect multiple editing steps.
+    </p>
+    """)
+
+    html.append("</body></html>")
+    return "\n".join(html)
+
+
+###############################################################################
+# 4) OPTIONAL CHART: MATPLOTLIB
+###############################################################################
+
+def create_rsid_chart(rsid_wordcount, chart_filename="rsid_chart.png"):
+    """
+    Creates a bar chart of RSIDs by word count and saves as .png.
+    """
+    # Sort by frequency descending
+    sorted_data = sorted(rsid_wordcount.items(), key=lambda x: x[1], reverse=True)
+    labels = [str(k) for k, _ in sorted_data]
+    values = [v for _, v in sorted_data]
+
+    plt.figure(figsize=(10, 6))
+    plt.bar(labels, values, color='skyblue')
+    plt.xticks(rotation=45, ha='right')
+    plt.title("Word Count by RSID")
+    plt.xlabel("RSID")
+    plt.ylabel("Word Count")
+    plt.tight_layout()
+    plt.savefig(chart_filename)
+    plt.close()
+    return chart_filename
+
+
+###############################################################################
+# 5) HIGH-LEVEL ORCHESTRATION
+###############################################################################
+
+def generate_report(docx_file, output_html="my_report.html", chart_png="rsid_chart.png"):
+    """
+    High-level function that:
+      1) Extracts + parses docx -> runs_data
+      2) Computes RSID word count stats
+      3) Builds color-coded HTML with frequency table
+      4) (Optionally) creates a bar chart
+
+    If you don't want the chart, pass chart_png=None or comment out that call.
+    """
+    xml_data = extract_docx_xml(docx_file)
+    runs_data = parse_document_xml(xml_data)
+
+    # Basic analytics
+    rsid_stats = compute_rsid_stats(runs_data)
+
+    # Generate color-coded HTML
+    html_report = build_html_report(runs_data, rsid_stats)
+    with open(output_html, "w", encoding="utf-8") as f:
+        f.write(html_report)
+    print(f"[INFO] HTML report written to: {output_html}")
+
+    # Optional: bar chart
+    if chart_png:
+        chart_file = create_rsid_chart(rsid_stats, chart_filename=chart_png)
+        print(f"[INFO] Chart saved as: {chart_file}")
+
+
+def main():
+    """
+    Usage:
+        python clarify_with_analytics.py <docx_file> [output_html] [chart.png]
+
+    If you omit chart.png, it will still create a chart called "rsid_chart.png".
+    If you pass 'none' or 'None' as the third argument, no chart is created.
+    """
+    if len(sys.argv) < 2:
+        print("Usage: python clarify_with_analytics.py <docx_file> [output_html] [chart.png]")
+        sys.exit(1)
+
+    docx_path = sys.argv[1]
+    if not os.path.isfile(docx_path):
+        print(f"Error: file {docx_path} not found.")
+        sys.exit(1)
+
+    out_html = "my_report.html"
+    if len(sys.argv) > 2:
+        out_html = sys.argv[2]
+
+    chart_png = "rsid_chart.png"
+    if len(sys.argv) > 3:
+        if sys.argv[3].lower() in ["none", "null"]:
+            chart_png = None
+        else:
+            chart_png = sys.argv[3]
+
+    generate_report(docx_path, output_html=out_html, chart_png=chart_png)
+
+
+if __name__ == "__main__":
+    main()

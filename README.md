@@ -62,9 +62,6 @@ Dependencies
 - `seaborn`
 - `numpy`
 
-License
-This project is licensed under the MIT License.
-
 Author and Developer:
 Zander Janse Van Rensburg &  Simphiwe Nhlapo
 

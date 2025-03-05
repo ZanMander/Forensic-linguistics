@@ -3,6 +3,14 @@ Various application serving as forensic linguistic instruments
 
 
 Overview
+
+This application draws on research methods described in Chapter 5 of Clare Johnson’s PhD thesis:
+
+Johnson, C. (2023). *Understanding academic integrity and plagiarism in the digital age: Can digital forensics techniques help prevent and detect academic misconduct?* Doctoral thesis, University of South Wales.
+
+Special thanks to Dr. Johnson for the foundational ideas and techniques that made this project possible.
+
+
 This application is a Streamlit-based tool designed to analyze revision history and author contributions in Microsoft Word (.docx) documents. The tool extracts XML data from .docx files, parses revision tracking information, and provides insights into editing patterns, formatting changes, and author contributions.
 
  Features
@@ -58,5 +66,5 @@ License
 This project is licensed under the MIT License.
 
 Author and Developer
-Simphiwe Nhlapo
+Zander Janse Van Rensburg &  Simphiwe Nhlapo
 

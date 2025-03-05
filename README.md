@@ -65,6 +65,8 @@ Dependencies
 License
 This project is licensed under the MIT License.
 
-Author and Developer
+Author and Developer:
 Zander Janse Van Rensburg &  Simphiwe Nhlapo
+
+Link : https://forensic-linguistics-9yvvfucxcvzfxnjilxvg7j.streamlit.app/
 
